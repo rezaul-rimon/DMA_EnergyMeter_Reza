@@ -4,12 +4,17 @@
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
 #include <SD.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 // #include <FastLED.h>
 
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 21600, 3600000);
+
 // Device Config
-#define DEVICE_ID 1102002309180001
+#define DEVICE_ID 1102002309180000
 #define HB_INTERVAL 1*30*1000
-#define DATA_INTERVAL 1*60*1000
+#define DATA_INTERVAL 5*60*1000
 
 unsigned long hbLastTime = 0, dataLastTime = 0;
 boolean sd_status = false;
@@ -195,6 +200,9 @@ void networkTask(void *param) {
     WiFi.begin();
 
     for (;;) {
+      if(WiFi.status() == WL_CONNECTED){
+        timeClient.begin();
+      }
       if (WiFi.status() != WL_CONNECTED) {
         reconnectWiFi();
         }
@@ -282,6 +290,22 @@ void ParsingModbusData() {
             String(powerFactor);
 }
 
+String getTimeStamp() {
+  // Get current time
+  unsigned long epochTime = timeClient.getEpochTime(); // Epoch time
+  struct tm *ptm = gmtime((time_t *)&epochTime);       // Convert to tm structure
+
+  char timeStamp[20];
+  sprintf(timeStamp, "%04d-%02d-%02d %02d:%02d:%02d",
+          ptm->tm_year + 1900,
+          ptm->tm_mon + 1,
+          ptm->tm_mday,
+          ptm->tm_hour,
+          ptm->tm_min,
+          ptm->tm_sec);
+  return String(timeStamp);
+}
+
 /*********************************************************************/
 /*                                  main                             */
 /*********************************************************************/
@@ -289,9 +313,6 @@ void ParsingModbusData() {
 // Task for main loop (e.g., performing your application logic)
 void mainTask(void *param) {
   for (;;) {
-    GetModbusData();
-    ParsingModbusData();
-
     // Send Heartbeat every HB_INTERVAL
     unsigned long hbNow = millis();
     if (hbNow - hbLastTime > HB_INTERVAL) {
@@ -310,10 +331,21 @@ void mainTask(void *param) {
     if (dataNow - dataLastTime > DATA_INTERVAL) {
       dataLastTime = dataNow;
 
+      if(WiFi.status() == WL_CONNECTED){
+        timeClient.update(); // Update time from NTP server
+      }
+
+      String currentTime = getTimeStamp();
+      DEBUG_PRINTLN(currentTime);
+
+      GetModbusData();
+      ParsingModbusData();
+
       // Write data to SD card
       if (SD.begin()) {
         File file = SD.open(filename, FILE_APPEND);
         if (file) {
+          file.print(currentTime); file.print(",");
           file.print(em_data);
           file.close();
           sd_status = true;
@@ -360,6 +392,8 @@ void setup() {
     node.preTransmission(preTransmission);
     node.postTransmission(postTransmission);
 
+    // timeClient.begin();
+
     // Initialize SD card
     if (!SD.begin(SD_CS_PIN)) {
       DEBUG_PRINTLN("SD Card initializing...");
@@ -379,7 +413,7 @@ void setup() {
       File file = SD.open(filename, FILE_WRITE);
       sd_status = true;
       if (file) {
-        file.println("taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+        file.println("timeStamp,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
         file.close();
         DEBUG_PRINTLN("CSV header written.");
       } else {
@@ -399,8 +433,8 @@ void setup() {
     client.setCallback(mqttCallback);
 
     // Create tasks
-    xTaskCreatePinnedToCore(networkTask, "Network Task", 10*1024, NULL, 1, &networkTaskHandle, 0);
-    xTaskCreatePinnedToCore(mainTask, "Main Task", 32*1024, NULL, 1, &mainTaskHandle, 1);
+    xTaskCreatePinnedToCore(networkTask, "Network Task", 8*1024, NULL, 1, &networkTaskHandle, 0);
+    xTaskCreatePinnedToCore(mainTask, "Main Task", 16*1024, NULL, 1, &mainTaskHandle, 1);
     xTaskCreatePinnedToCore(wifiResetTask, "WiFi Reset Task", 4*1024, NULL, 1, &wifiResetTaskHandle, 1);
 }
 
