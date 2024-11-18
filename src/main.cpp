@@ -65,6 +65,8 @@ int lABvolt, lBCvolt, lCAvolt;
 int pAcurrent, pBcurrent, pCcurrent;
 int frequency, powerFactor;
 
+String em_data;
+
 // SD Card Configuration
 #define SD_CS_PIN 5
 const char* filename = "/energy_data.csv";
@@ -137,9 +139,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // Function to reconnect to MQTT with a unique client ID
 void reconnectMQTT() {
   if (!client.connected()) {
-    String clientId = "ESP32Client-";
+    String clientId = "dma_em_";
     clientId += String(random(0xffff), HEX);  // Generate a unique client ID using a random hexadecimal string
-
+    clientId += String(random(0xffff), HEX);
+    
     if (mqttAttemptCount > 0) {
       DEBUG_PRINTLN("Attempting MQTT connection...");
       
@@ -207,24 +210,76 @@ void networkTask(void *param) {
 // Task for WiFi reset and WiFiManager setup
 void wifiResetTask(void *param) {
   for (;;) {
+    // Check if button is pressed (LOW state)
     if (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW) {
-      // Suspend other tasks to avoid conflict
-      // vTaskDelay(500 / portTICK_PERIOD_MS);  // Debounce Delay
-      DEBUG_PRINTLN("Reset Button Pressed....");
-      vTaskSuspend(networkTaskHandle);
-      vTaskSuspend(mainTaskHandle);
+      unsigned long pressStartTime = millis(); // Record the time when the button is pressed
+      DEBUG_PRINTLN("Button Pressed....");
 
-      DEBUG_PRINTLN("Starting WiFiManager for new WiFi setup...");
-      WiFiManager wifiManager;
-      wifiManager.resetSettings();  // Clear previous settings
-      wifiManager.autoConnect("DMA_EM_WiFi_Setup"); // Start AP for new configuration
+      // Wait for at least 5 seconds to confirm long press
+      while (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW) {
+        // Check if button is still pressed after 5 seconds
+        if (millis() - pressStartTime >= 5000) {
+          DEBUG_PRINTLN("5 seconds holding time reached, starting WiFiManager...");
 
-      DEBUG_PRINTLN("New WiFi credentials set, restarting...");
-      ESP.restart();
+          // Suspend other tasks to avoid conflict
+          vTaskSuspend(networkTaskHandle);
+          vTaskSuspend(mainTaskHandle);
+
+          DEBUG_PRINTLN("Starting WiFiManager for new WiFi setup...");
+          WiFiManager wifiManager;
+          wifiManager.resetSettings();  // Clear previous settings
+          wifiManager.autoConnect("DMA_EM_WiFi_Setup"); // Start AP for new configuration
+
+          DEBUG_PRINTLN("New WiFi credentials set, restarting...");
+          ESP.restart();  // Restart after WiFi configuration
+        }
+
+        vTaskDelay(100 / portTICK_PERIOD_MS);  // Small delay to avoid overwhelming the system
+      }
     }
 
     vTaskDelay(100 / portTICK_PERIOD_MS);  // Check every 100 ms
   }
+}
+
+void GetModbusData() {
+  taeHigh = readModbusData(taeHigh_reg_addr);
+  taeLow = readModbusData(taeLow_reg_addr);
+  activePower = readModbusData(activePower_reg_addr);
+  pAvolt = readModbusData(pAvolt_reg_addr);
+  pBvolt = readModbusData(pBvolt_reg_addr);
+  pCvolt = readModbusData(pCvolt_reg_addr);
+  lABvolt = readModbusData(lABvolt_reg_addr);
+  lBCvolt = readModbusData(lBCvolt_reg_addr);
+  lCAvolt = readModbusData(lCAvolt_reg_addr);
+  pAcurrent = readModbusData(pAcurrent_reg_addr);
+  pBcurrent = readModbusData(pBcurrent_reg_addr);
+  pCcurrent = readModbusData(pCcurrent_reg_addr);
+  frequency = readModbusData(frequency_reg_addr);
+  powerFactor = readModbusData(powerfactor_reg_addr);
+}
+
+void ParsingModbusData() {
+  // Scale values as needed
+  float taeHigha = taeHigh / 10.0;
+  float taeLowa = taeLow / 10.0;
+
+  // Format the data into a string
+  em_data = String(DEVICE_ID) + "," +
+            String(taeHigha) + "," +
+            String(taeLowa) + "," +
+            String(activePower) + "," +
+            String(pAvolt) + "," +
+            String(pBvolt) + "," +
+            String(pCvolt) + "," +
+            String(lABvolt) + "," +
+            String(lBCvolt) + "," +
+            String(lCAvolt) + "," +
+            String(pAcurrent) + "," +
+            String(pBcurrent) + "," +
+            String(pCcurrent) + "," +
+            String(frequency) + "," +
+            String(powerFactor);
 }
 
 /*********************************************************************/
@@ -234,118 +289,56 @@ void wifiResetTask(void *param) {
 // Task for main loop (e.g., performing your application logic)
 void mainTask(void *param) {
   for (;;) {
-    /*
-    // Read data from Modbus
-    taeHigh = readModbusData(taeHigh_reg_addr);
-    taeLow = readModbusData(taeLow_reg_addr);
-    activePower = readModbusData(activePower_reg_addr);
-    pAvolt = readModbusData(pAvolt_reg_addr);
-    pBvolt = readModbusData(pBvolt_reg_addr);
-    pCvolt = readModbusData(pCvolt_reg_addr);
-    lABvolt = readModbusData(lABvolt_reg_addr);
-    lBCvolt = readModbusData(lBCvolt_reg_addr);
-    lCAvolt = readModbusData(lCAvolt_reg_addr);
-    pAcurrent = readModbusData(pAcurrent_reg_addr);
-    pBcurrent = readModbusData(pBcurrent_reg_addr);
-    pCcurrent = readModbusData(pCcurrent_reg_addr);
-    frequency = readModbusData(frequency_reg_addr);
-    powerFactor = readModbusData(powerfactor_reg_addr);
+    GetModbusData();
+    ParsingModbusData();
 
-    float taeHigha = taeHigh/10.0;
-    float taeLowa = taeLow/10.0;
-
-    String em_data = String(DEVICE_ID) + ",";
-    em_data += String(taeHigha) + ",";
-    em_data += String(taeLowa) + ",";
-    em_data += String(activePower) + ",";
-    em_data += String(pAvolt) + ",";
-    em_data += String(pBvolt) + ",";
-    em_data += String(pCvolt) + ",";
-    em_data += String(lABvolt) + ",";
-    em_data += String(lBCvolt) + ",";
-    em_data += String(lCAvolt) + ",";
-    em_data += String(pAcurrent) + ",";
-    em_data += String(pBcurrent) + ",";
-    em_data += String(pCcurrent) + ",";
-    em_data += String(frequency) + ",";
-    em_data += String(powerFactor);
-
-    // Print results to Serial Monitor
-    /*
-    Serial.print("taeHigh: "); Serial.println(taeHigh);
-    Serial.print("taeLow: "); Serial.println(taeLow);
-    Serial.print("Active Power: "); Serial.println(activePower);
-    Serial.print("Phase A Voltage: "); Serial.println(pAvolt);
-    Serial.print("Phase B Voltage: "); Serial.println(pBvolt);
-    Serial.print("Phase C Voltage: "); Serial.println(pCvolt);
-    Serial.print("Line AB Voltage: "); Serial.println(lABvolt);
-    Serial.print("Line BC Voltage: "); Serial.println(lBCvolt);
-    Serial.print("Line CA Voltage: "); Serial.println(lCAvolt);
-    Serial.print("Phase A Current: "); Serial.println(pAcurrent);
-    Serial.print("Phase B Current: "); Serial.println(pBcurrent);
-    Serial.print("Phase C Current: "); Serial.println(pCcurrent);
-    Serial.print("Frequency: "); Serial.println(frequency);
-    Serial.print("Power Factor: "); Serial.println(powerFactor);
-    */
-
-   
+    // Send Heartbeat every HB_INTERVAL
     unsigned long hbNow = millis();
-    if(hbNow - hbLastTime > HB_INTERVAL){
+    if (hbNow - hbLastTime > HB_INTERVAL) {
       hbLastTime = hbNow;
-      if (client.connected()) { 
-        String hb_data = String(DEVICE_ID)+","+"wifi_connected,"+"SD_Card:"+String(sd_status);
+      if (client.connected()) {
+        String hb_data = String(DEVICE_ID) + "," + "wifi_connected," + "SD_Card:" + String(sd_status);
         client.publish("DMA/EnergyMeter/PUB", hb_data.c_str());
-        DEBUG_PRINTLN(hb_data);
         DEBUG_PRINTLN("Heartbeat published data to mqtt");
-
       } else {
         DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
       }
     }
-    
-    /*
+
+    // Send Data every DATA_INTERVAL
     unsigned long dataNow = millis();
-    if(dataNow - dataLastTime > DATA_INTERVAL){
+    if (dataNow - dataLastTime > DATA_INTERVAL) {
       dataLastTime = dataNow;
 
       // Write data to SD card
-      File file = SD.open(filename, FILE_APPEND);
-      if (file) {
-        file.print(taeHigh); file.print(",");
-        file.print(taeLow); file.print(",");
-        file.print(activePower); file.print(",");
-        file.print(pAvolt); file.print(",");
-        file.print(pBvolt); file.print(",");
-        file.print(pCvolt); file.print(",");
-        file.print(lABvolt); file.print(",");
-        file.print(lBCvolt); file.print(",");
-        file.print(lCAvolt); file.print(",");
-        file.print(pAcurrent); file.print(",");
-        file.print(pBcurrent); file.print(",");
-        file.print(pCcurrent); file.print(",");
-        file.print(frequency); file.print(",");
-        file.println(powerFactor);
-        file.close();
-        DEBUG_PRINTLN("Data written success to SD card.");
-        sd_status = true;
+      if (SD.begin()) {
+        File file = SD.open(filename, FILE_APPEND);
+        if (file) {
+          file.print(em_data);
+          file.close();
+          sd_status = true;
+          DEBUG_PRINTLN("Data written success to SD card.");
+        } else {
+          sd_status = false;
+          DEBUG_PRINTLN("Error opening file for writing.");
+        }
       } else {
-        DEBUG_PRINTLN("Error opening file for writing.");
-        sd_status = false;
+        DEBUG_PRINTLN("SD card initialization failed.");
       }
-////////////////////////////////////
 
+      // Send data via MQTT
       if (client.connected()) {
         DEBUG_PRINTLN(em_data);
         client.publish("DMA/EnergyMeter/PUB", em_data.c_str());
-        DEBUG_PRINTLN("Data published data to mqtt");
-
-    } else {
-      DEBUG_PRINTLN("Failed to publish data on MQTT.")
+        DEBUG_PRINTLN("Data published to mqtt");
+      } else {
+        DEBUG_PRINTLN("Failed to publish data on MQTT");
+      }
     }
-}
-*/
-      DEBUG_PRINTLN("Hello");
-      vTaskDelay(1000 / portTICK_PERIOD_MS);  // Print "Hello" every second
+    
+    // Additional task (optional, e.g., print debug message every second)
+    DEBUG_PRINTLN("Hello");
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Print "Hello" every second
   }
 }
 
@@ -371,7 +364,7 @@ void setup() {
     if (!SD.begin(SD_CS_PIN)) {
       DEBUG_PRINTLN("SD Card initializing...");
       // while (1); // Halt execution if SD card initialization fails
-      for (int i=10; i>0; i--) {
+      for (int i=5; i>0; i--) {
         SD.begin(SD_CS_PIN);
         delay(500);
         DEBUG_PRINTLN("Trying to initial SD Card: " + String(i));
@@ -414,3 +407,7 @@ void setup() {
 // Check for WiFi reset button press in loop
 void loop() {
 }
+
+
+
+
