@@ -493,20 +493,22 @@ void mainTask(void *param) {
 
       // Write data to SD card
       if (SD.begin()) {
-        File file = SD.open(filename, FILE_APPEND);
-        if (file) {
-          file.print(currentTime); file.print(",");
-          file.print(em_data);
-          file.close();
-          sd_status = true;
-          DEBUG_PRINTLN("Data written success to SD card.");
-        } else {
-          sd_status = false;
-          DEBUG_PRINTLN("Error opening file for writing.");
-        }
+      File file = SD.open(filename, FILE_APPEND);
+      if (file) {
+        file.print(currentTime); 
+        file.print(","); 
+        file.println(em_data);  // Use println() to end the line
+        file.close();j
+        sd_status = true;
+        DEBUG_PRINTLN("Data written successfully to SD card.");
       } else {
-        DEBUG_PRINTLN("SD card initialization failed.");
+        sd_status = false;
+        DEBUG_PRINTLN("Error opening file for writing.");
       }
+      } else {
+      DEBUG_PRINTLN("SD card initialization failed.");
+      }
+
 
       // Send data via MQTT
       if (client.connected()) {
