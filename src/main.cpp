@@ -19,8 +19,8 @@
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
 // Device Config
-#define DEVICE_ID 1102002309180001
-#define HB_INTERVAL 1*30*1000
+#define DEVICE_ID "1102002309180000"
+#define HB_INTERVAL 1*60*1000
 #define DATA_INTERVAL 5*60*1000
 
 // RS485 Config
@@ -34,7 +34,7 @@
 #define WIFI_WAIT_COUNT 60
 #define WIFI_WAIT_DELAY 1000
 #define MAX_WIFI_ATTEMPTS 2
-#define MQTT_ATTEMPT_COUNT 6
+#define MQTT_ATTEMPT_COUNT 10
 #define MQTT_ATTEMPT_DELAY 5000
 
 // WiFi and MQTT attempt counters
@@ -308,33 +308,36 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // Send Data from SD Card to FTP Server
 void sendToFtp(){
   // Convert String to const char*
-  char timeChar[32];  // Buffer for file name
-  snprintf(timeChar, sizeof(timeChar), "em_data_%04X.csv", random(0xFFFF));
+  char ftpFileName[35];  // Buffer for file name
+  snprintf(ftpFileName, sizeof(ftpFileName), "%s_em_data_%04X.csv", DEVICE_ID, random(0xFFFF));
+
+  // Print the generated file name for debugging
+  DEBUG_PRINTLN(ftpFileName);
 
   // Connect to FTP server
   ftp.OpenConnection();
-  Serial.println("Connected to FTP server");
+  DEBUG_PRINTLN("Connected to FTP server");
 
   // Change working directory on the FTP server
   ftp.ChangeWorkDir("/home/dmacam/intrusion/LOS_FILE_TEST");
-  Serial.println("Directory changed");
+  DEBUG_PRINTLN("Directory changed");
 
   // Open the file from SD card
   File file = SD.open(filename);
   if (!file) {
-    Serial.println("Failed to open file on SD card");
+    DEBUG_PRINTLN("Failed to open file on SD card");
     ftp.CloseConnection();
     return;
   }
 
   ftp.InitFile("Type A");
-  ftp.NewFile(timeChar);
+  ftp.NewFile(ftpFileName);
   byte buffer[128];  //in this part it will read the file bit my bit then upload it
   while (file.available()) {
     int bytesRead = file.read(buffer, sizeof(buffer));
     ftp.WriteData(buffer, bytesRead);  // Write data to FTP server
   }
-  Serial.println("File uploaded successfully");
+  DEBUG_PRINTLN("File uploaded successfully");
   ftp.CloseFile();  // Close the file transfer
   file.close();
   ftp.CloseConnection();
@@ -346,7 +349,7 @@ void clearSDCard(){
   if (SD.begin()) {
     File file = SD.open(filename, FILE_WRITE);
     if (file) {
-        file.println("timeStamp,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+        file.println("timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written after FTP");
     } else {
@@ -526,6 +529,10 @@ void setup() {
   // Serial Monitor buad rate
   Serial.begin(115200);
 
+  Serial.print("Device ID: ");
+  Serial.println(DEVICE_ID);
+  delay(1000);
+
   // LED setup
   // FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 
@@ -561,7 +568,7 @@ void setup() {
     File file = SD.open(filename, FILE_WRITE);
     sd_status = true;
     if (file) {
-      file.println("timeStamp,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+      file.println("timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written.");
     } else {
