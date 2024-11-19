@@ -498,7 +498,7 @@ void mainTask(void *param) {
         file.print(currentTime); 
         file.print(","); 
         file.println(em_data);  // Use println() to end the line
-        file.close();j
+        file.close();
         sd_status = true;
         DEBUG_PRINTLN("Data written successfully to SD card.");
       } else {
