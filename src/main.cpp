@@ -1,3 +1,5 @@
+// Start Library Include section //
+// ---------------------------- //
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiManager.h>  // WiFiManager library
@@ -8,6 +10,9 @@
 #include <WiFiUdp.h>
 #include <ESP32_FTPClient.h>
 // #include <FastLED.h>
+
+// End Library Include section //
+// ---------------------------- //
 
 
 //Configuration Section Start
@@ -47,6 +52,7 @@ int mqttAttemptCount = MQTT_ATTEMPT_COUNT;
 const char* mqtt_server = "broker2.dma-bd.com";
 const char* mqtt_user = "broker2";
 const char* mqtt_password = "Secret!@#$1234";
+const char* mqtt_topic = "DMA/EnergyMeter/PUB";
 
 //File Name for SD Card
 const char* filename = "/energy_data.csv";
@@ -133,7 +139,7 @@ int pAcurrent, pBcurrent, pCcurrent;
 int frequency, powerFactor;
 
 // FInal Data Storing variable
-String em_data;
+char em_data[128];
 
 //End Variable declaretion Section//
 //--------------------------------//
@@ -154,75 +160,80 @@ void postTransmission() {
 }
 
 // Function to read a specific Modbus register
-int readModbusData(uint16_t reg_address) {
-  uint8_t result = node.readHoldingRegisters(reg_address, 1);
-  if (result == node.ku8MBSuccess) {
-    return node.getResponseBuffer(0);
-  } else {
-    return -1; // Error value
+// int readModbusData(uint16_t reg_address) {
+//   uint8_t result = node.readHoldingRegisters(reg_address, 1);
+//   if (result == node.ku8MBSuccess) {
+//     return node.getResponseBuffer(0);
+//   } else {
+//     return -1; // Error value
+//   }
+// }
+
+int readModbusData(uint16_t reg_address, uint8_t max_retries) {
+  
+  vTaskDelay(pdMS_TO_TICKS(30));
+
+  int value = -1;
+  while (max_retries > 0) {  // Continue while there are retries left
+    uint8_t result = node.readHoldingRegisters(reg_address, 1);
+    if (result == node.ku8MBSuccess) {
+      value = node.getResponseBuffer(0);
+      DEBUG_PRINT("Trying to get data from Modbus: ");
+      DEBUG_PRINT(reg_address);
+      DEBUG_PRINT(": ");
+      DEBUG_PRINTLN(value);
+      break; // Exit the loop if a valid value is read
+    }
+    max_retries--;  // Decrease the retry count
+    vTaskDelay(pdMS_TO_TICKS(60)); // Small delay between retries (100ms)
   }
+
+  return value; // Return the value, -1 if all retries failed
 }
+
 
 // Getting Modbus Data
 void GetModbusData() {
-  taeHigh = readModbusData(taeHigh_reg_addr);
-  taeLow = readModbusData(taeLow_reg_addr);
-  activePower = readModbusData(activePower_reg_addr);
-  pAvolt = readModbusData(pAvolt_reg_addr);
-  pBvolt = readModbusData(pBvolt_reg_addr);
-  pCvolt = readModbusData(pCvolt_reg_addr);
-  lABvolt = readModbusData(lABvolt_reg_addr);
-  lBCvolt = readModbusData(lBCvolt_reg_addr);
-  lCAvolt = readModbusData(lCAvolt_reg_addr);
-  pAcurrent = readModbusData(pAcurrent_reg_addr);
-  pBcurrent = readModbusData(pBcurrent_reg_addr);
-  pCcurrent = readModbusData(pCcurrent_reg_addr);
-  frequency = readModbusData(frequency_reg_addr);
-  powerFactor = readModbusData(powerfactor_reg_addr);
+  // Read Modbus data with specific retry counts for each field
+  taeHigh = readModbusData(taeHigh_reg_addr, 3);       // Retry up to 3 times
+  taeLow = readModbusData(taeLow_reg_addr, 3);         // Retry up to 3 times
+  activePower = readModbusData(activePower_reg_addr, 2); // Retry up to 2 times
+  pAvolt = readModbusData(pAvolt_reg_addr, 1);         // Retry up to 1 times
+  pBvolt = readModbusData(pBvolt_reg_addr, 1);         // Retry up to 1 times
+  pCvolt = readModbusData(pCvolt_reg_addr, 1);         // Retry up to 2 times
+  lABvolt = readModbusData(lABvolt_reg_addr, 1);       // Retry up to 1 time
+  lBCvolt = readModbusData(lBCvolt_reg_addr, 1);       // Retry up to 1 time
+  lCAvolt = readModbusData(lCAvolt_reg_addr, 1);       // Retry up to 1 time
+  pAcurrent = readModbusData(pAcurrent_reg_addr, 1);   // Retry up to 2 times
+  pBcurrent = readModbusData(pBcurrent_reg_addr, 1);   // Retry up to 2 times
+  pCcurrent = readModbusData(pCcurrent_reg_addr, 1);   // Retry up to 2 times
+  frequency = readModbusData(frequency_reg_addr, 1);   // Retry up to 1 time
+  powerFactor = readModbusData(powerfactor_reg_addr, 1); // Retry up to 1 time
 }
+
 
 // Parsing Modbus Data
 void ParsingModbusData() {
-  // Scale values as needed
-  float taeHigha = taeHigh / 10.0;
-  float taeLowa = taeLow / 10.0;
-
-  // Format the data into a string
-  em_data = 
-    String(DEVICE_ID) + "," +
-    String(taeHigha) + "," +
-    String(taeLowa) + "," +
-    String(activePower) + "," +
-    String(pAvolt) + "," +
-    String(pBvolt) + "," +
-    String(pCvolt) + "," +
-    String(lABvolt) + "," +
-    String(lBCvolt) + "," +
-    String(lCAvolt) + "," +
-    String(pAcurrent) + "," +
-    String(pBcurrent) + "," +
-    String(pCcurrent) + "," +
-    String(frequency) + "," +
-    String(powerFactor);
+  // Format the data into the buffer with DEVICE_ID at the beginning
+  snprintf(em_data, sizeof(em_data), 
+           "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+           DEVICE_ID,  // Add DEVICE_ID to the formatted string
+           taeHigh,
+           taeLow,
+           activePower,
+           pAvolt,
+           pBvolt,
+           pCvolt,
+           lABvolt,
+           lBCvolt,
+           lCAvolt,
+           pAcurrent,
+           pBcurrent,
+           pCcurrent,
+           frequency,
+           powerFactor);
 }
 
-// Getting Timestamp form NTP Server
-String getTimeStamp() {
-  // Get current time
-  unsigned long epochTime = timeClient.getEpochTime(); // Epoch time
-  struct tm *ptm = gmtime((time_t *)&epochTime);       // Convert to tm structure
-
-  char timeStamp[20];
-  sprintf(
-    timeStamp, "%04d-%02d-%02d %02d:%02d:%02d",
-    ptm->tm_year + 1900,
-    ptm->tm_mon + 1,
-    ptm->tm_mday,
-    ptm->tm_hour,
-    ptm->tm_min,
-    ptm->tm_sec);
-  return String(timeStamp);
-}
 // Function to reconnect to WiFi
 void reconnectWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -231,12 +242,13 @@ void reconnectWiFi() {
       WiFi.begin();  // Use saved credentials
       wifiAttemptCount--;
       DEBUG_PRINTLN("Remaining WiFi attempts: " + String(wifiAttemptCount));
-      vTaskDelay(WIFI_ATTEMPT_DELAY / portTICK_PERIOD_MS);
+      // vTaskDelay(WIFI_ATTEMPT_DELAY / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(WIFI_ATTEMPT_DELAY));
     } else if (wifiWaitCount > 0) {
       wifiWaitCount--;
       DEBUG_PRINTLN("WiFi wait... retrying in a moment");
       DEBUG_PRINTLN("Remaining WiFi wait time: " + String(wifiWaitCount) + " seconds");
-      vTaskDelay(WIFI_WAIT_DELAY / portTICK_PERIOD_MS);
+      vTaskDelay(pdMS_TO_TICKS(WIFI_WAIT_DELAY));
     } else {
       wifiAttemptCount = WIFI_ATTEMPT_COUNT;
       wifiWaitCount = WIFI_WAIT_COUNT;
@@ -252,24 +264,27 @@ void reconnectWiFi() {
 // Function to reconnect to MQTT with a unique client ID
 void reconnectMQTT() {
   if (!client.connected()) {
-    String clientId = "dma_em_";
-    clientId += String(random(0xffff), HEX);  // Generate a unique client ID using a random hexadecimal string
-    clientId += String(random(0xffff), HEX);
-    
+
+    char clientId[16];  // 1 byte for "dma_em_" + 8 bytes for random hex + null terminator
+    snprintf(clientId, sizeof(clientId), "dma_em_%04X%04X", random(0xffff), random(0xffff));
+
     if (mqttAttemptCount > 0) {
       DEBUG_PRINTLN("Attempting MQTT connection...");
       
-      if (client.connect(clientId.c_str(), mqtt_user, mqtt_password)) {  // Use the unique client ID
+      if (client.connect(clientId, mqtt_user, mqtt_password)) {  // Use the unique client ID
         DEBUG_PRINTLN("MQTT connected");
-        DEBUG_PRINTLN("Client_ID: " + String(clientId));
-        String topic = String("DMA/EnergyMeter/PUB/") + DEVICE_ID;
-        client.subscribe(topic.c_str());
-        // client.subscribe("DMA/EnergyMeter/PUB/"+DEVICE_ID);
+        DEBUG_PRINT("Client_ID: ");
+        DEBUG_PRINTLN(clientId);
+        
+        char topic[48];
+        snprintf(topic, sizeof(topic), "%s/%s", mqtt_topic, DEVICE_ID);
+        client.subscribe(topic);
+        
       } else {
         DEBUG_PRINTLN("MQTT connection failed");
         DEBUG_PRINTLN("Remaining MQTT attempts: " + String(mqttAttemptCount));
         mqttAttemptCount--;
-        vTaskDelay(MQTT_ATTEMPT_DELAY / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(MQTT_ATTEMPT_DELAY));
       }
     } else {
       DEBUG_PRINTLN("Max MQTT attempts exceeded, restarting...");
@@ -308,7 +323,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // Send Data from SD Card to FTP Server
 void sendToFtp(){
   // Convert String to const char*
-  char ftpFileName[35];  // Buffer for file name
+  char ftpFileName[40];  // Buffer for file name
   snprintf(ftpFileName, sizeof(ftpFileName), "%s_em_data_%04X.csv", DEVICE_ID, random(0xFFFF));
 
   // Print the generated file name for debugging
@@ -349,7 +364,7 @@ void clearSDCard(){
   if (SD.begin()) {
     File file = SD.open(filename, FILE_WRITE);
     if (file) {
-        file.println("timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+        file.println("AOS,timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written after FTP");
     } else {
@@ -394,11 +409,12 @@ void networkTask(void *param) {
       // Initialize timeClient only once
       if (!timeClientInitialized) {
         timeClient.begin();  // Start timeClient after WiFi is connected
+        vTaskDelay(pdMS_TO_TICKS(1000));
+      // Update time from NTP server
+        timeClient.update();
         timeClientInitialized = true;
       }
 
-      // Update time from NTP server
-      // timeClient.update();
 
       // Check and reconnect MQTT if necessary
       if (!client.connected()) {
@@ -413,7 +429,7 @@ void networkTask(void *param) {
     client.loop();
 
     // Delay for 100ms before next cycle
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
@@ -445,11 +461,11 @@ void wifiResetTask(void *param) {
           ESP.restart();  // Restart after WiFi configuration
         }
 
-        vTaskDelay(100 / portTICK_PERIOD_MS);  // Small delay to avoid overwhelming the system
+        vTaskDelay(pdMS_TO_TICKS(100));  // Small delay to avoid overwhelming the system
       }
     }
 
-    vTaskDelay(100 / portTICK_PERIOD_MS);  // Check every 100 ms
+    vTaskDelay(pdMS_TO_TICKS(100));  // Check every 100 ms
   }
 }
 
@@ -458,71 +474,147 @@ void wifiResetTask(void *param) {
 /*                                  main                             */
 /*********************************************************************/
 
-
-// Main Task //
-//----------//
 void mainTask(void *param) {
   for (;;) {
-    // Send Heartbeat every HB_INTERVAL
+
+    // Get the current time's epoch
     unsigned long hbNow = millis();
     if (hbNow - hbLastTime > HB_INTERVAL) {
-      hbLastTime = hbNow;
-      if (client.connected()) {
-        String hb_data = String(DEVICE_ID) + "," + "wifi_connected," + "SD_Card:" + String(sd_status);
-        client.publish("DMA/EnergyMeter/PUB", hb_data.c_str());
-        DEBUG_PRINTLN("Heartbeat published data to mqtt");
-      } else {
-        DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
-      }
+        hbLastTime = hbNow;
+
+        if (client.connected()) {
+            char hb_data[50];  // Buffer for the heartbeat data
+
+            // Format the heartbeat message into the buffer
+            snprintf(hb_data, sizeof(hb_data), "%s,wifi_connected,SD_Card:%d", DEVICE_ID, sd_status);
+
+            // Publish the heartbeat message
+            client.publish(mqtt_topic, hb_data);
+            DEBUG_PRINTLN("Heartbeat published data to mqtt");
+        } else {
+            DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
+        }
     }
 
-    // Send Data every DATA_INTERVAL
+    // Get the current epoch time for timestamp
+    unsigned long epochTime = timeClient.getEpochTime(); // Epoch time
+    struct tm *ptm = gmtime((time_t *)&epochTime);       // Convert to tm structure
+
+    // Format the timestamp into the provided buffer
+    char timestamp[20];
+    snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
+            ptm->tm_year + 1900,
+            ptm->tm_mon + 1,
+            ptm->tm_mday,
+            ptm->tm_hour,
+            ptm->tm_min,
+            ptm->tm_sec);
+
+
     unsigned long dataNow = millis();
-    if (dataNow - dataLastTime > DATA_INTERVAL) {
-      dataLastTime = dataNow;
+    // Check if the current minute is 0 (top of the hour)
+    if (ptm->tm_min == 0) {
+        // Send data every hour (when minute == 0)
+        if (dataNow - dataLastTime > 60000) {  // 1 minute interval for top of the hour
+            dataLastTime = dataNow;
 
-      if(WiFi.status() == WL_CONNECTED){
-        timeClient.update(); // Update time from NTP server
-      }
+            // Process data
+            if (WiFi.status() == WL_CONNECTED) {
+                timeClient.update(); // Update time from NTP server
+            }
 
-      String currentTime = getTimeStamp();
-      DEBUG_PRINTLN(currentTime);
+            DEBUG_PRINTLN(timestamp); // Print the timestamp directly (no need to convert to String)
 
-      GetModbusData();
-      ParsingModbusData();
+            GetModbusData();  // Get Modbus data
+            ParsingModbusData();  // Parse Modbus data into em_data
+            
+            // Determine if WiFi and MQTT are connected (aos = 1 if both are connected)
+            boolean aos = (WiFi.status() == WL_CONNECTED && client.connected()) ? true : false;
 
-      // Write data to SD card
-      if (SD.begin()) {
-      File file = SD.open(filename, FILE_APPEND);
-      if (file) {
-        file.print(currentTime); 
-        file.print(","); 
-        file.println(em_data);  // Use println() to end the line
-        file.close();
-        sd_status = true;
-        DEBUG_PRINTLN("Data written successfully to SD card.");
-      } else {
-        sd_status = false;
-        DEBUG_PRINTLN("Error opening file for writing.");
-      }
-      } else {
-      DEBUG_PRINTLN("SD card initialization failed.");
-      }
+            // Write data to SD card, including aos status
+            if (SD.begin()) {
+                File file = SD.open(filename, FILE_APPEND);
+                if (file) {
+                    file.print(aos); // Write the aos status in the first column
+                    file.print(","); 
+                    file.print(timestamp); 
+                    file.print(","); 
+                    file.println(em_data);  // Use println() to end the line
+                    file.close();
+                    sd_status = true;
+                    DEBUG_PRINTLN("Data written successfully to SD card.");
+                } else {
+                    sd_status = false;
+                    DEBUG_PRINTLN("Error opening file for writing.");
+                }
+            } else {
+                DEBUG_PRINTLN("SD card initialization failed.");
+            }
 
+            // Send data via MQTT
+            if (client.connected()) {
+                DEBUG_PRINTLN(em_data);
+                client.publish(mqtt_topic, em_data);  // Use the global MQTT topic
 
-      // Send data via MQTT
-      if (client.connected()) {
-        DEBUG_PRINTLN(em_data);
-        client.publish("DMA/EnergyMeter/PUB", em_data.c_str());
-        DEBUG_PRINTLN("Data published to mqtt");
-      } else {
-        DEBUG_PRINTLN("Failed to publish data on MQTT");
-      }
+                DEBUG_PRINTLN("Data published to mqtt");
+            } else {
+                DEBUG_PRINTLN("Failed to publish data on MQTT");
+            }
+        }
+    } else {
+        // For all other times, send data every DATA_INTERVAL
+        if (dataNow - dataLastTime > DATA_INTERVAL) {
+            dataLastTime = dataNow;
+
+            // Process data
+            if (WiFi.status() == WL_CONNECTED) {
+                timeClient.update(); // Update time from NTP server
+            }
+
+            DEBUG_PRINTLN(timestamp); // Print the timestamp directly (no need to convert to String)
+
+            GetModbusData();  // Get Modbus data
+            ParsingModbusData();  // Parse Modbus data into em_data
+
+            // Determine if WiFi and MQTT are connected (aos = 1 if both are connected)
+            boolean aos = (WiFi.status() == WL_CONNECTED && client.connected()) ? true : false;
+
+            // Write data to SD card, including aos status
+            if (SD.begin()) {
+                File file = SD.open(filename, FILE_APPEND);
+                if (file) {
+                    file.print(aos); // Write the aos status in the first column
+                    file.print(","); 
+                    file.print(timestamp); 
+                    file.print(","); 
+                    file.println(em_data);  // Use println() to end the line
+                    file.close();
+                    sd_status = true;
+                    DEBUG_PRINTLN("Data written successfully to SD card.");
+                } else {
+                    sd_status = false;
+                    DEBUG_PRINTLN("Error opening file for writing.");
+                }
+            } else {
+                DEBUG_PRINTLN("SD card initialization failed.");
+            }
+
+            // Send data via MQTT
+            if (client.connected()) {
+                DEBUG_PRINTLN(em_data);
+                client.publish(mqtt_topic, em_data);  // Use the global MQTT topic
+
+                DEBUG_PRINTLN("Data published to mqtt");
+            } else {
+                DEBUG_PRINTLN("Failed to publish data on MQTT");
+            }
+        }
     }
-    
+
     // Additional task (optional, e.g., print debug message every second)
-    DEBUG_PRINTLN("Hello");
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Print "Hello" every second
+    // DEBUG_PRINTLN(timestamp);
+    // DEBUG_PRINTLN("Hello");
+    vTaskDelay(pdMS_TO_TICKS(1000));  // Print "Hello" every second
   }
 }
 
@@ -570,7 +662,7 @@ void setup() {
     File file = SD.open(filename, FILE_WRITE);
     sd_status = true;
     if (file) {
-      file.println("timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+      file.println("AOS,timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written.");
     } else {
