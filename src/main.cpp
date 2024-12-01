@@ -9,7 +9,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ESP32_FTPClient.h>
-// #include <FastLED.h>
+#include <FastLED.h>
 
 // End Library Include section //
 // ---------------------------- //
@@ -24,7 +24,7 @@
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
 // Device Config
-#define DEVICE_ID "1102002309180000"
+#define DEVICE_ID "1191012412010001"
 #define HB_INTERVAL 1*60*1000
 #define DATA_INTERVAL 5*60*1000
 
@@ -63,9 +63,9 @@ const char* filename = "/energy_data.csv";
 #define FTP_PASS "dmabd987!@#$"
 
 // LED Conffig
-// #define DATA_PIN 4
-// #define NUM_LEDS 1
-// CRGB leds[NUM_LEDS];
+#define DATA_PIN 4
+#define NUM_LEDS 1
+CRGB leds[NUM_LEDS];
 
 //End Configuration Section//
 //-------------------------//
@@ -236,6 +236,9 @@ void ParsingModbusData() {
 
 // Function to reconnect to WiFi
 void reconnectWiFi() {
+  leds[0] = CRGB::Red;
+  FastLED.show();
+
   if (WiFi.status() != WL_CONNECTED) {
     if (wifiAttemptCount > 0) {
       DEBUG_PRINTLN("Attempting WiFi connection...");
@@ -264,6 +267,8 @@ void reconnectWiFi() {
 // Function to reconnect to MQTT with a unique client ID
 void reconnectMQTT() {
   if (!client.connected()) {
+    leds[0] = CRGB::Yellow;
+    FastLED.show();
 
     char clientId[16];  // 1 byte for "dma_em_" + 8 bytes for random hex + null terminator
     snprintf(clientId, sizeof(clientId), "dma_em_%04X%04X", random(0xffff), random(0xffff));
@@ -275,6 +280,9 @@ void reconnectMQTT() {
         DEBUG_PRINTLN("MQTT connected");
         DEBUG_PRINT("Client_ID: ");
         DEBUG_PRINTLN(clientId);
+
+        leds[0] = CRGB::Black;
+        FastLED.show();
         
         char topic[48];
         snprintf(topic, sizeof(topic), "%s/%s", mqtt_topic, DEVICE_ID);
@@ -305,6 +313,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Print the topic and message for debugging
   DEBUG_PRINTLN("Message arrived on topic: " + String(topic));
   DEBUG_PRINTLN("Message content: " + message);
+  leds[0] = CRGB::Blue;
+  FastLED.show();
+  vTaskDelay(pdMS_TO_TICKS(500));
+  leds[0] = CRGB::Black;
+  FastLED.show();
 
   // Check if the message is "get_from_sd_card"
   if (message == "get_data_from_sd_card") {
@@ -341,7 +354,13 @@ void sendToFtp(){
   File file = SD.open(filename);
   if (!file) {
     DEBUG_PRINTLN("Failed to open file on SD card");
+    leds[0] = CRGB::Red;
+    FastLED.show();
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    leds[0] = CRGB::Black;
+    FastLED.show();
     ftp.CloseConnection();
+
     return;
   }
 
@@ -353,6 +372,12 @@ void sendToFtp(){
     ftp.WriteData(buffer, bytesRead);  // Write data to FTP server
   }
   DEBUG_PRINTLN("File uploaded successfully");
+  leds[0] = CRGB::Green;
+  FastLED.show();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  leds[0] = CRGB::Black;
+  FastLED.show();
+
   ftp.CloseFile();  // Close the file transfer
   file.close();
   ftp.CloseConnection();
@@ -367,26 +392,22 @@ void clearSDCard(){
         file.println("AOS,timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written after FTP");
+      leds[0] = CRGB::Green;
+      FastLED.show();
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      leds[0] = CRGB::Black;
+      FastLED.show();
     } else {
       DEBUG_PRINTLN("Failed to create Header After FTP");
+      leds[0] = CRGB::Red;
+      FastLED.show();
+      vTaskDelay(pdMS_TO_TICKS(500));
+      leds[0] = CRGB::Black;
+      FastLED.show();
     }
   }
 }
 
-
-// Function to manage LED status
-/*
-void manageLEDStatus() {
-    CRGB color = CRGB::Black;
-    if (WiFi.status() != WL_CONNECTED) {
-        color = CRGB::Red;
-    } else if (!client.connected()) {
-        color = CRGB::Yellow;
-    }
-    leds[0] = color;
-    FastLED.show();
-}
-*/
 
 // End Function Section //
 //----------------------//
@@ -448,6 +469,9 @@ void wifiResetTask(void *param) {
         if (millis() - pressStartTime >= 5000) {
           DEBUG_PRINTLN("5 seconds holding time reached, starting WiFiManager...");
 
+          leds[0] = CRGB::Green;
+          FastLED.show();
+
           // Suspend other tasks to avoid conflict
           vTaskSuspend(networkTaskHandle);
           vTaskSuspend(mainTaskHandle);
@@ -455,7 +479,7 @@ void wifiResetTask(void *param) {
           DEBUG_PRINTLN("Starting WiFiManager for new WiFi setup...");
           WiFiManager wifiManager;
           wifiManager.resetSettings();  // Clear previous settings
-          wifiManager.autoConnect("DMA_EM_WiFi_Setup"); // Start AP for new configuration
+          wifiManager.autoConnect("DMA_EnergyMeter"); // Start AP for new configuration
 
           DEBUG_PRINTLN("New WiFi credentials set, restarting...");
           ESP.restart();  // Restart after WiFi configuration
@@ -486,11 +510,16 @@ void mainTask(void *param) {
             char hb_data[50];  // Buffer for the heartbeat data
 
             // Format the heartbeat message into the buffer
-            snprintf(hb_data, sizeof(hb_data), "%s,wifi_connected,SD_Card:%d", DEVICE_ID, sd_status);
+            snprintf(hb_data, sizeof(hb_data), "%s,W:1,G:0,C:1,SD:%d", DEVICE_ID, sd_status);
 
             // Publish the heartbeat message
             client.publish(mqtt_topic, hb_data);
             DEBUG_PRINTLN("Heartbeat published data to mqtt");
+            leds[0] = CRGB::Blue;
+            FastLED.show();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            leds[0] = CRGB::Black;
+            FastLED.show();
         } else {
             DEBUG_PRINTLN("Failed to publish Heartbeat on MQTT");
         }
@@ -557,6 +586,11 @@ void mainTask(void *param) {
                 client.publish(mqtt_topic, em_data);  // Use the global MQTT topic
 
                 DEBUG_PRINTLN("Data published to mqtt");
+                leds[0] = CRGB::Green;
+                FastLED.show();
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                leds[0] = CRGB::Black;
+                FastLED.show();
             } else {
                 DEBUG_PRINTLN("Failed to publish data on MQTT");
             }
@@ -605,6 +639,11 @@ void mainTask(void *param) {
                 client.publish(mqtt_topic, em_data);  // Use the global MQTT topic
 
                 DEBUG_PRINTLN("Data published to mqtt");
+                leds[0] = CRGB::Green;
+                FastLED.show();
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                leds[0] = CRGB::Black;
+                FastLED.show();
             } else {
                 DEBUG_PRINTLN("Failed to publish data on MQTT");
             }
@@ -628,7 +667,7 @@ void setup() {
   delay(1000);
 
   // LED setup
-  // FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 
   // Initialize RS485 pins
   pinMode(MAX485_DE_RE, OUTPUT);
