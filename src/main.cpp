@@ -1,11 +1,15 @@
 // Start Library Include section //
 // ---------------------------- //
+#define SD_CARD 0
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiManager.h>  // WiFiManager library
 #include <PubSubClient.h>
 #include <ModbusMaster.h>
+#if SD_CARD
 #include <SD.h>
+#endif
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ESP32_FTPClient.h>
@@ -24,9 +28,9 @@
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
 // Device Config
-#define DEVICE_ID "1191012412010000"
-#define HB_INTERVAL 1*60*1000
-#define DATA_INTERVAL 5*60*1000
+#define DEVICE_ID "1191012501290000"
+#define HB_INTERVAL 1*30*1000
+#define DATA_INTERVAL 1*60*1000
 
 // RS485 Config
 #define MAX485_DE_RE 27
@@ -109,34 +113,38 @@ bool wifiResetFlag = false;
 //Heartbeat and Data send interval variable
 unsigned long hbLastTime = 0, dataLastTime = 0;
 
+
 //SD Card status
 boolean sd_status = false;
 
+#if SD_CARD
 // SD Card Chip Select Pin
 #define SD_CS_PIN 5
 
+#endif
+
 // Modbus register addresses
-#define taeHigh_reg_addr 0x30
-#define taeLow_reg_addr 0x31
-#define activePower_reg_addr 0x1A
-#define pAvolt_reg_addr 0x14
-#define pBvolt_reg_addr 0x15
-#define pCvolt_reg_addr 0x16
-#define lABvolt_reg_addr 0x17
-#define lBCvolt_reg_addr 0x18
-#define lCAvolt_reg_addr 0x19
+#define taeHigh_reg_addr 0x3C
+#define taeLow_reg_addr 0x3A
+#define activePower_reg_addr 0x2A
+#define pAvolt_reg_addr 0x00
+#define pBvolt_reg_addr 0x02
+#define pCvolt_reg_addr 0x04
+#define lABvolt_reg_addr 0x08
+#define lBCvolt_reg_addr 0x0A
+#define lCAvolt_reg_addr 0x0C
 #define pAcurrent_reg_addr 0x10
-#define pBcurrent_reg_addr 0x11
-#define pCcurrent_reg_addr 0x12
-#define frequency_reg_addr 0x1E
-#define powerfactor_reg_addr 0x1D
+#define pBcurrent_reg_addr 0x12
+#define pCcurrent_reg_addr 0x14
+#define frequency_reg_addr 0x38
+#define powerfactor_reg_addr 0x36
 
 // Modbus data storing Variables
-int taeHigh, taeLow, activePower;
-int pAvolt, pBvolt, pCvolt;
-int lABvolt, lBCvolt, lCAvolt;
-int pAcurrent, pBcurrent, pCcurrent;
-int frequency, powerFactor;
+float taeHigh, taeLow, activePower;
+float pAvolt, pBvolt, pCvolt;
+float lABvolt, lBCvolt, lCAvolt;
+float pAcurrent, pBcurrent, pCcurrent;
+float frequency, powerFactor;
 
 // FInal Data Storing variable
 char em_data[128];
@@ -169,46 +177,53 @@ void postTransmission() {
 //   }
 // }
 
-int readModbusData(uint16_t reg_address, uint8_t max_retries) {
+float readModbusData(uint16_t regAddress, uint8_t maxRetries) {
   
-  vTaskDelay(pdMS_TO_TICKS(30));
-
-  int value = -1;
-  while (max_retries > 0) {  // Continue while there are retries left
-    uint8_t result = node.readHoldingRegisters(reg_address, 1);
+  vTaskDelay(pdMS_TO_TICKS(150));
+  while (maxRetries > 0) {
+    uint8_t result = node.readInputRegisters(regAddress, 2);
+    
     if (result == node.ku8MBSuccess) {
-      value = node.getResponseBuffer(0);
-      DEBUG_PRINT("Trying to get data from Modbus: ");
-      DEBUG_PRINT(reg_address);
-      DEBUG_PRINT(": ");
-      DEBUG_PRINTLN(value);
-      break; // Exit the loop if a valid value is read
-    }
-    max_retries--;  // Decrease the retry count
-    vTaskDelay(pdMS_TO_TICKS(60)); // Small delay between retries (100ms)
-  }
+      uint16_t lowWord = node.getResponseBuffer(0);  // LSB stored in lower register
+      uint16_t highWord = node.getResponseBuffer(1); // MSB stored in higher register
 
-  return value; // Return the value, -1 if all retries failed
+      union {
+        uint32_t intVal;
+        float floatVal;
+      } converter;
+
+      converter.intVal = ((uint32_t)highWord << 16) | lowWord;
+      return converter.floatVal; // Return value if read is successful
+    } else {
+      maxRetries--;
+      Serial.println("Modbus Read Error, Retrying...");
+      vTaskDelay(pdMS_TO_TICKS(100)); // Optionally add a delay between retries
+    }
+  }
+  
+  // If all retries failed, return NaN to indicate an error
+  Serial.println("Modbus Read Failed after retries");
+  return NAN;
 }
 
 
 // Getting Modbus Data
 void GetModbusData() {
   // Read Modbus data with specific retry counts for each field
-  taeHigh = readModbusData(taeHigh_reg_addr, 3);       // Retry up to 3 times
-  taeLow = readModbusData(taeLow_reg_addr, 3);         // Retry up to 3 times
+  taeHigh = readModbusData(taeHigh_reg_addr, 2);       // Retry up to 3 times
+  taeLow = readModbusData(taeLow_reg_addr, 2);         // Retry up to 3 times
   activePower = readModbusData(activePower_reg_addr, 2); // Retry up to 2 times
-  pAvolt = readModbusData(pAvolt_reg_addr, 1);         // Retry up to 1 times
-  pBvolt = readModbusData(pBvolt_reg_addr, 1);         // Retry up to 1 times
-  pCvolt = readModbusData(pCvolt_reg_addr, 1);         // Retry up to 2 times
-  lABvolt = readModbusData(lABvolt_reg_addr, 1);       // Retry up to 1 time
-  lBCvolt = readModbusData(lBCvolt_reg_addr, 1);       // Retry up to 1 time
-  lCAvolt = readModbusData(lCAvolt_reg_addr, 1);       // Retry up to 1 time
-  pAcurrent = readModbusData(pAcurrent_reg_addr, 1);   // Retry up to 2 times
-  pBcurrent = readModbusData(pBcurrent_reg_addr, 1);   // Retry up to 2 times
-  pCcurrent = readModbusData(pCcurrent_reg_addr, 1);   // Retry up to 2 times
-  frequency = readModbusData(frequency_reg_addr, 1);   // Retry up to 1 time
-  powerFactor = readModbusData(powerfactor_reg_addr, 1); // Retry up to 1 time
+  pAvolt = readModbusData(pAvolt_reg_addr, 2);         // Retry up to 1 times
+  pBvolt = readModbusData(pBvolt_reg_addr, 2);         // Retry up to 1 times
+  pCvolt = readModbusData(pCvolt_reg_addr, 2);         // Retry up to 2 times
+  lABvolt = readModbusData(lABvolt_reg_addr, 2);       // Retry up to 1 time
+  lBCvolt = readModbusData(lBCvolt_reg_addr, 2);       // Retry up to 1 time
+  lCAvolt = readModbusData(lCAvolt_reg_addr, 2);       // Retry up to 1 time
+  pAcurrent = readModbusData(pAcurrent_reg_addr, 2);   // Retry up to 2 times
+  pBcurrent = readModbusData(pBcurrent_reg_addr, 2);   // Retry up to 2 times
+  pCcurrent = readModbusData(pCcurrent_reg_addr, 2);   // Retry up to 2 times
+  frequency = readModbusData(frequency_reg_addr, 2);   // Retry up to 1 time
+  powerFactor = readModbusData(powerfactor_reg_addr, 2); // Retry up to 1 time
 }
 
 
@@ -216,8 +231,8 @@ void GetModbusData() {
 void ParsingModbusData() {
   // Format the data into the buffer with DEVICE_ID at the beginning
   snprintf(em_data, sizeof(em_data), 
-           "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
-           DEVICE_ID,  // Add DEVICE_ID to the formatted string
+           "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+           DEVICE_ID,  // DEVICE_ID
            taeHigh,
            taeLow,
            activePower,
@@ -283,7 +298,7 @@ void reconnectMQTT() {
 
         leds[0] = CRGB::Black;
         FastLED.show();
-        
+      
         char topic[48];
         snprintf(topic, sizeof(topic), "%s/%s", mqtt_topic, DEVICE_ID);
         client.subscribe(topic);
@@ -302,8 +317,11 @@ void reconnectMQTT() {
 }
 
 // MQTT callback function
+#if SD_CARD
 void sendToFtp();
 void clearSDCard();
+#endif
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message;
   for (unsigned int i = 0; i < length; i++) {
@@ -322,18 +340,23 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Check if the message is "get_from_sd_card"
   if (message == "get_data_from_sd_card") {
     DEBUG_PRINTLN("Triggering sendToFtp()...");
+    #if SD_CARD
     sendToFtp();
+    #endif
   }
 
   // Check if the message is "get_from_sd_card"
   if (message == "clear_sd_card") {
     DEBUG_PRINTLN("Triggering sendToFtp()...");
+    #if SD_CARD
     clearSDCard();  // Call the function to upload the file
+    #endif
   }
 }
 
 
 // Send Data from SD Card to FTP Server
+#if SD_CARD
 void sendToFtp(){
   // Convert String to const char*
   char ftpFileName[40];  // Buffer for file name
@@ -382,8 +405,10 @@ void sendToFtp(){
   file.close();
   ftp.CloseConnection();
 }
+#endif
 
 // Clear the SD Card Data
+#if SD_CARD
 void clearSDCard(){
   //Clear SD Card
   if (SD.begin()) {
@@ -407,7 +432,7 @@ void clearSDCard(){
     }
   }
 }
-
+#endif
 
 // End Function Section //
 //----------------------//
@@ -558,6 +583,7 @@ void mainTask(void *param) {
             ParsingModbusData();  // Parse Modbus data into em_data
             
             // Determine if WiFi and MQTT are connected (aos = 1 if both are connected)
+            #if SD_CARD
             boolean aos = (WiFi.status() == WL_CONNECTED && client.connected()) ? true : false;
 
             // Write data to SD card, including aos status
@@ -579,6 +605,7 @@ void mainTask(void *param) {
             } else {
                 DEBUG_PRINTLN("SD card initialization failed.");
             }
+            #endif
 
             // Send data via MQTT
             if (client.connected()) {
@@ -611,6 +638,7 @@ void mainTask(void *param) {
             ParsingModbusData();  // Parse Modbus data into em_data
 
             // Determine if WiFi and MQTT are connected (aos = 1 if both are connected)
+            #if SD_CARD
             boolean aos = (WiFi.status() == WL_CONNECTED && client.connected()) ? true : false;
 
             // Write data to SD card, including aos status
@@ -632,6 +660,8 @@ void mainTask(void *param) {
             } else {
                 DEBUG_PRINTLN("SD card initialization failed.");
             }
+
+            #endif
 
             // Send data via MQTT
             if (client.connected()) {
@@ -684,6 +714,7 @@ void setup() {
   // timeClient.begin();
 
   // Initialize SD card
+  #if SD_CARD
   if (!SD.begin(SD_CS_PIN)) {
     DEBUG_PRINTLN("SD Card initializing...");
     // while (1); // Halt execution if SD card initialization fails
@@ -712,6 +743,8 @@ void setup() {
     sd_status = false;
     DEBUG_PRINTLN("SD card Failed");
   }
+
+  #endif
 
   // Button setup
   pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
