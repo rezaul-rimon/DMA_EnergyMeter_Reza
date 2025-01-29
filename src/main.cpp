@@ -24,7 +24,7 @@
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
 // Device Config
-#define DEVICE_ID "1191012412010001"
+#define DEVICE_ID "1191012412010000"
 #define HB_INTERVAL 1*60*1000
 #define DATA_INTERVAL 5*60*1000
 
