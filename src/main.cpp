@@ -132,8 +132,8 @@ boolean sd_status = false;
 #endif
 
 // Modbus register addresses
-#define taeHigh_reg_addr 0x3C
-#define taeLow_reg_addr 0x3A
+#define tNetEnergy_reg_addr 0x3A
+#define tImpEnergy_reg_addr 0x60
 #define activePower_reg_addr 0x2A
 #define pAvolt_reg_addr 0x00
 #define pBvolt_reg_addr 0x02
@@ -148,7 +148,7 @@ boolean sd_status = false;
 #define powerfactor_reg_addr 0x36
 
 // Modbus data storing Variables
-float taeHigh, taeLow, activePower;
+float tNetEnergy, tImpEnergy, activePower;
 float pAvolt, pBvolt, pCvolt;
 float lABvolt, lBCvolt, lCAvolt;
 float pAcurrent, pBcurrent, pCcurrent;
@@ -218,8 +218,8 @@ float readModbusData(uint16_t regAddress, uint8_t maxRetries) {
 // Getting Modbus Data
 void GetModbusData() {
   // Read Modbus data with specific retry counts for each field
-  taeHigh = readModbusData(taeHigh_reg_addr, 2);       // Retry up to 3 times
-  taeLow = readModbusData(taeLow_reg_addr, 2);         // Retry up to 3 times
+  tNetEnergy = readModbusData(tNetEnergy_reg_addr, 2);       // Retry up to 3 times
+  tImpEnergy = readModbusData(tImpEnergy_reg_addr, 2);         // Retry up to 3 times
   activePower = readModbusData(activePower_reg_addr, 2); // Retry up to 2 times
   pAvolt = readModbusData(pAvolt_reg_addr, 2);         // Retry up to 1 times
   pBvolt = readModbusData(pBvolt_reg_addr, 2);         // Retry up to 1 times
@@ -241,8 +241,8 @@ void ParsingModbusData() {
   snprintf(em_data, sizeof(em_data), 
            "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
            DEVICE_ID,  // DEVICE_ID
-           taeHigh,
-           taeLow,
+           tNetEnergy,
+           tImpEnergy,
            activePower,
            pAvolt,
            pBvolt,
@@ -431,7 +431,7 @@ void clearSDCard(){
   if (SD.begin()) {
     File file = SD.open(filename, FILE_WRITE);
     if (file) {
-        file.println("AOS,timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+        file.println("AOS,timeStamp,Device_ID,tNetEnergy,tImpEnergy,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written after FTP");
       leds[0] = CRGB::Green;
@@ -759,7 +759,7 @@ void setup() {
     File file = SD.open(filename, FILE_WRITE);
     sd_status = true;
     if (file) {
-      file.println("AOS,timeStamp,Device_ID,taeHigh,taeLow,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
+      file.println("AOS,timeStamp,Device_ID,tNetEnergy,tImpEnergy,ActivePower,PhaseA_V,PhaseB_V,PhaseC_V,LineAB_V,LineBC_V,LineCA_V,PhaseA_C,PhaseB_C,PhaseC_C,Frequency,PowerFactor");
       file.close();
       DEBUG_PRINTLN("CSV header written.");
     } else {
