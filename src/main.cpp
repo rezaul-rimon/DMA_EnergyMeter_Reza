@@ -24,8 +24,8 @@
 #define DEBUG_PRINTLN(x) if (DEBUG_MODE) { Serial.println(x); }
 
 // Device Config
-#define DEVICE_ID "1191012412010001"
-#define HB_INTERVAL 1*60*1000
+#define DEVICE_ID "1191032406160004"
+#define HB_INTERVAL 2*60*1000
 #define DATA_INTERVAL 5*60*1000
 
 // RS485 Config
@@ -52,7 +52,9 @@ int mqttAttemptCount = MQTT_ATTEMPT_COUNT;
 const char* mqtt_server = "broker2.dma-bd.com";
 const char* mqtt_user = "broker2";
 const char* mqtt_password = "Secret!@#$1234";
-const char* mqtt_topic = "DMA/EnergyMeter/PUB";
+const char* mqtt_topic = "DMA/EM/PUB";
+const char* mqtt_hb_topic = "DMA/EM/HB";
+const char* mqtt_sub_topic = "DMA/EM/SUB";
 
 //File Name for SD Card
 const char* filename = "/energy_data.csv";
@@ -159,16 +161,7 @@ void postTransmission() {
   digitalWrite(MAX485_DE_RE, LOW); // Enable Receive mode
 }
 
-// Function to read a specific Modbus register
-// int readModbusData(uint16_t reg_address) {
-//   uint8_t result = node.readHoldingRegisters(reg_address, 1);
-//   if (result == node.ku8MBSuccess) {
-//     return node.getResponseBuffer(0);
-//   } else {
-//     return -1; // Error value
-//   }
-// }
-
+// Function to read Modbus data with retries
 int readModbusData(uint16_t reg_address, uint8_t max_retries) {
   
   vTaskDelay(pdMS_TO_TICKS(30));
@@ -191,7 +184,6 @@ int readModbusData(uint16_t reg_address, uint8_t max_retries) {
   return value; // Return the value, -1 if all retries failed
 }
 
-
 // Getting Modbus Data
 void GetModbusData() {
   // Read Modbus data with specific retry counts for each field
@@ -211,28 +203,67 @@ void GetModbusData() {
   powerFactor = readModbusData(powerfactor_reg_addr, 1); // Retry up to 1 time
 }
 
-
 // Parsing Modbus Data
+// void ParsingModbusData() {
+//   // Format the data into the buffer with DEVICE_ID at the beginning
+//   snprintf(em_data, sizeof(em_data), 
+//            "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+//            DEVICE_ID,  // Add DEVICE_ID to the formatted string
+//            taeHigh,
+//            taeLow,
+//            activePower,
+//            pAvolt,
+//            pBvolt,
+//            pCvolt,
+//            lABvolt,
+//            lBCvolt,
+//            lCAvolt,
+//            pAcurrent,
+//            pBcurrent,
+//            pCcurrent,
+//            frequency,
+//            powerFactor);
+// }
+
 void ParsingModbusData() {
-  // Format the data into the buffer with DEVICE_ID at the beginning
-  snprintf(em_data, sizeof(em_data), 
-           "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
-           DEVICE_ID,  // Add DEVICE_ID to the formatted string
-           taeHigh,
-           taeLow,
-           activePower,
-           pAvolt,
-           pBvolt,
-           pCvolt,
-           lABvolt,
-           lBCvolt,
-           lCAvolt,
-           pAcurrent,
-           pBcurrent,
-           pCcurrent,
-           frequency,
-           powerFactor);
-}
+    // Combine 32-bit energy register from taeHigh and taeLow
+    uint32_t totalEnergyRaw = ((uint32_t)taeHigh << 16) | (uint32_t)taeLow;
+
+    // Scale energy — assuming it's in 0.1 kWh units
+    float totaltNetEnergy = totalEnergyRaw * 0.1;
+    float tImpEnergy = totalEnergyRaw * 0.1;
+
+    // Apply proper scaling
+    float ap = activePower * 0.1;
+    float va = pAvolt * 0.1;
+    float vb = pBvolt * 0.1;
+    float vc = pCvolt * 0.1;
+    float vab = lABvolt * 0.1;
+    float vbc = lBCvolt * 0.1;
+    float vca = lCAvolt * 0.1;
+    float ia = pAcurrent * 0.1;
+    float ib = pBcurrent * 0.1;
+    float ic = pCcurrent * 0.1;
+    float freq = frequency * 0.01;
+    float pf = powerFactor * 0.001;
+
+    // Optional debug prints to verify scaling
+    // Serial.println("---- Scaled Values ----");
+    // Serial.printf("Energy: %.2f kWh, Power: %.2f W\n", totaltNetEnergy, ap);
+    // Serial.printf("Voltages: VA=%.2f, VB=%.2f, VC=%.2f, VAB=%.2f, VBC=%.2f, VCA=%.2f\n", va, vb, vc, vab, vbc, vca);
+    // Serial.printf("Currents: IA=%.2f, IB=%.2f, IC=%.2f\n", ia, ib, ic);
+    // Serial.printf("Frequency: %.2f Hz, PF: %.3f\n", freq, pf);
+
+    // Format the final MQTT message string
+    snprintf(em_data, sizeof(em_data),
+      "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+      DEVICE_ID,
+      totaltNetEnergy, tImpEnergy, ap,
+      va, vb, vc,
+      vab, vbc, vca,
+      ia, ib, ic,
+      freq, pf);
+  }
 
 // Function to reconnect to WiFi
 void reconnectWiFi() {
@@ -285,7 +316,7 @@ void reconnectMQTT() {
         FastLED.show();
         
         char topic[48];
-        snprintf(topic, sizeof(topic), "%s/%s", mqtt_topic, DEVICE_ID);
+        snprintf(topic, sizeof(topic), "%s/%s", mqtt_sub_topic, DEVICE_ID);
         client.subscribe(topic);
         
       } else {
@@ -513,7 +544,7 @@ void mainTask(void *param) {
             snprintf(hb_data, sizeof(hb_data), "%s,W:1,G:0,C:1,SD:%d", DEVICE_ID, sd_status);
 
             // Publish the heartbeat message
-            client.publish(mqtt_topic, hb_data);
+            client.publish(mqtt_hb_topic, hb_data);
             DEBUG_PRINTLN("Heartbeat published data to mqtt");
             leds[0] = CRGB::Blue;
             FastLED.show();
